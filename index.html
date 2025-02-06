@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bank Reconciliation Tool</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 5px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 20px 0;
+    }
+    table, th, td {
+      border: 1px solid black;
+    }
+    th, td {
+      padding: 8px;
+      text-align: left;
+    }
+    #reconciliation-interface, #unreconciled-section, #report-section {
+      display: none;
+    }
+    .summary-table {
+      width: 50%;
+      margin: 20px 0;
+    }
+    
+    /* Responsive Design */
+    @media (max-width: 768px) {
+      h1 {
+        font-size: 1.5rem;
+      }
+
+      table, th, td {
+        font-size: 0.9rem;
+      }
+
+      input[type="file"],
+      button {
+        width: 95%;
+        font-size: 14px;
+        padding: 8px 12px;
+      }
+   }
+     @media (max-width: 480px) {
+      h1 {
+        font-size: 1.5rem;
+      }
+
+      table, th, td {
+        font-size: 0.8rem;
+      }
+
+      input[type="file"],
+      button {
+        font-size: 12px;
+        padding: 6px 10px;
+      }
+    }
+    
+  </style>
+</head>
+<body>
+  <h1>Bank Reconciliation Tool</h1>
+  <p>Upload your bank statement and company ledger CSV files, match transactions, and generate reports.</p>
+  <input type="file" id="bank-statement" accept=".csv">
+  <input type="file" id="company-ledger" accept=".csv">
+  <button onclick="processFiles()">Upload Files</button>
+
+  <div id="reconciliation-interface">
+    <h2>Reconciliation Interface</h2>
+    <h3>Bank Statement</h3>
+    <table id="bank-table">
+      <thead>
+        <tr>
+          <th>Select</th>
+          <th>Date</th>
+          <th>Description</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <h3>Company Ledger</h3>
+    <table id="ledger-table">
+      <thead>
+        <tr>
+          <th>Select</th>
+          <th>Date</th>
+          <th>Description</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <button onclick="reconcile()">Match Transactions</button>
+  </div>
+
+  <div id="unreconciled-section">
+    <h2>Unreconciled Items</h2>
+    <h3>From Bank Statement</h3>
+    <table id="unreconciled-bank">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Description</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <h3>From Company Ledger</h3>
+    <table id="unreconciled-ledger">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Description</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <button onclick="generateReport()">Generate Reconciliation Report</button>
+  </div>
+
+  <div id="report-section">
+    <h2>Bank Reconciliation Report</h2>
+    <table class="summary-table">
+      <tbody>
+        <tr>
+          <td>Bank Statement Balance:</td>
+          <td id="bank-balance"></td>
+        </tr>
+        <tr>
+          <td>Add: Deposits in Transit:</td>
+          <td id="deposits-in-transit"></td>
+        </tr>
+        <tr>
+          <td>Less: Outstanding Checks:</td>
+          <td id="outstanding-checks"></td>
+        </tr>
+        <tr>
+          <td>Adjusted Bank Balance:</td>
+          <td id="adjusted-bank-balance"></td>
+        </tr>
+        <tr>
+          <td>Company Ledger Balance:</td>
+          <td id="ledger-balance"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    let bankData = [];
+    let ledgerData = [];
+    let reconciledBankIndexes = new Set();
+    let reconciledLedgerIndexes = new Set();
+    let bankStatementBalance = 0;
+    let ledgerBalance = 0;
+
+    function processFiles() {
+      const bankFile = document.getElementById('bank-statement').files[0];
+      const ledgerFile = document.getElementById('company-ledger').files[0];
+
+      if (!bankFile || !ledgerFile) {
+        alert('Please upload both files.');
+        return;
+      }
+
+      // Parse Bank Statement
+      Papa.parse(bankFile, {
+        header: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+          bankData = results.data.map(row => ({
+            Date: row.Date,
+            Description: row.Description,
+            Amount: parseFloat(row.Amount || 0)
+          }));
+          populateTable('bank-table', bankData, 'bank');
+          bankStatementBalance = calculateBalance(bankData);
+        }
+      });
+
+      // Parse Company Ledger
+      Papa.parse(ledgerFile, {
+        header: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+          ledgerData = results.data.map(row => ({
+            Date: row.Date,
+            Description: row.Description,
+            Amount: parseFloat(row.Amount || 0)
+          }));
+          populateTable('ledger-table', ledgerData, 'ledger');
+          ledgerBalance = calculateBalance(ledgerData);
+        }
+      });
+
+      document.getElementById('reconciliation-interface').style.display = 'block';
+    }
+
+    function populateTable(tableId, data, type) {
+      const tableBody = document.getElementById(tableId).querySelector('tbody');
+      tableBody.innerHTML = '';
+      data.forEach((row, index) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><input type="checkbox" id="${type}-${index}"></td>
+          <td>${row.Date}</td>
+          <td>${row.Description}</td>
+          <td>${row.Amount.toFixed(2)}</td>
+        `;
+        tableBody.appendChild(tr);
+      });
+    }
+
+    function calculateBalance(data) {
+      return data.reduce((sum, row) => sum + row.Amount, 0).toFixed(2);
+    }
+
+    function reconcile() {
+      reconciledBankIndexes.clear();
+      reconciledLedgerIndexes.clear();
+
+      bankData.forEach((_, bankIndex) => {
+        const bankCheckbox = document.getElementById(`bank-${bankIndex}`);
+        if (bankCheckbox.checked) {
+          reconciledBankIndexes.add(bankIndex);
+        }
+      });
+
+      ledgerData.forEach((_, ledgerIndex) => {
+        const ledgerCheckbox = document.getElementById(`ledger-${ledgerIndex}`);
+        if (ledgerCheckbox.checked) {
+          reconciledLedgerIndexes.add(ledgerIndex);
+        }
+      });
+
+      populateUnreconciledItems();
+    }
+
+    function populateUnreconciledItems() {
+      const unreconciledBank = bankData.filter((_, index) => !reconciledBankIndexes.has(index));
+      const unreconciledLedger = ledgerData.filter((_, index) => !reconciledLedgerIndexes.has(index));
+
+      populateTableRows('unreconciled-bank', unreconciledBank);
+      populateTableRows('unreconciled-ledger', unreconciledLedger);
+
+      document.getElementById('unreconciled-section').style.display = 'block';
+    }
+
+    function populateTableRows(tableId, data) {
+      const tableBody = document.getElementById(tableId).querySelector('tbody');
+      tableBody.innerHTML = '';
+      data.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${row.Date}</td>
+          <td>${row.Description}</td>
+          <td>${row.Amount.toFixed(2)}</td>
+        `;
+        tableBody.appendChild(tr);
+      });
+    }
+
+    function generateReport() {
+      const depositsInTransitTotal = Array.from(reconciledBankIndexes).reduce((sum, index) => sum + bankData[index].Amount, 0).toFixed(2);
+      const outstandingChecksTotal = Array.from(reconciledLedgerIndexes).reduce((sum, index) => sum + ledgerData[index].Amount, 0).toFixed(2);
+      const adjustedBankBalance = (parseFloat(bankStatementBalance) + parseFloat(depositsInTransitTotal) - parseFloat(outstandingChecksTotal)).toFixed(2);
+
+      document.getElementById('bank-balance').textContent = `NGN ${bankStatementBalance}`;
+      document.getElementById('deposits-in-transit').textContent = `NGN ${depositsInTransitTotal}`;
+      document.getElementById('outstanding-checks').textContent = `NGN ${outstandingChecksTotal}`;
+      document.getElementById('adjusted-bank-balance').textContent = `NGN ${adjustedBankBalance}`;
+      document.getElementById('ledger-balance').textContent = `NGN ${ledgerBalance}`;
+
+      document.getElementById('report-section').style.display = 'block';
+  }
+  </script>
+<footer style="text-align: center; padding: 15px 10px; margin-top: 20px;">
+  <p>&copy; YAP Africa Bank Reconciliation Tool. All rights reserved.</p>
+</footer>
+</body>
+</html>
+
